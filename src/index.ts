@@ -1,13 +1,17 @@
 #!/usr/bin/env -S node --no-warnings --loader ts-node/esm
+/* eslint-disable camelcase */
 /* eslint-disable sort-keys */
 import 'dotenv/config.js'
-import { Contact, Message, ScanStatus, types, WechatyBuilder, log, Room, Sayable, Wechaty } from 'wechaty'
+import { Contact, Message, ScanStatus, types, WechatyBuilder, log, Room, Sayable } from 'wechaty'
+import { FileBox } from 'file-box'
+import { PuppetBridgeJwpingWxbotV3090825 as PuppetBridge } from 'wechaty-puppet-bridge'
 import qrcodeTerminal from 'qrcode-terminal'
 import { baseConfig, getConfig, getHistory, getTalk, getRecord, saveConfigFile, updateHistory, updateRecord, updateTalk, updateData, getChatGPTConfig, storeHistory } from './config.js'
 import { getChatGPTReply } from './chatgpt.js'
 // import { getCurrentFormattedDate } from './utils/mod.js'
-import type { SendTextRequest } from './types/mod.js'
+import type { SendTextRequest, MessagePublishRequest } from './types/mod.js'
 import { v4 as uuidv4 } from 'uuid'
+import fs from 'fs'
 import {
   // messageStructuring,
   addMessage,
@@ -29,17 +33,24 @@ import {
   updateConfig,
 } from './api/chat.js'
 import { KeyWords } from './types/data.js'
-import { validateToken } from './service/user-service.js'
+import { validateToken, authenticateUser } from './service/user-service.js'
 
 // import Koa from 'koa'
 // import Router from 'koa-router'
 import Koa, { DefaultState, DefaultContext } from 'koa'
 import Router from '@koa/router'
-import bodyParser from 'koa-bodyparser'
+// import bodyParser from 'koa-bodyparser'
+import { koaBody } from 'koa-body'
+import path from 'path'
+
 import { AppRoutes } from './routes.js'
 import cors from '@koa/cors'
 import websockify from 'koa-websocket'
-import { PerformanceObserver } from 'perf_hooks'
+import serve from 'koa-static'
+
+// 获取当前文件根目录路径
+const rootDir = path.resolve(process.cwd(), './')
+log.info('rootDir:', rootDir)
 
 const config = getConfig()
 const whiteList = config.whiteList
@@ -81,7 +92,7 @@ const sendMessage = async (publisher: Publisher, text: Sayable): Promise<void> =
     } else {
       listener = rawMessage.talker()
     }
-  } else if ((publisher as Contact).payload?.name) {
+  } else {
     listener = publisher as Contact
   }
 
@@ -510,6 +521,9 @@ switch (puppet) {
   case 'wechaty-puppet-padlocal':
     ops.puppetOptions = { token }
     break
+  case 'wechaty-puppet-bridge':
+    ops.puppet = new PuppetBridge()
+    break
   default:
     log.info('不支持的puppet')
 }
@@ -582,11 +596,266 @@ startBot()
 const app = new Koa()
 const router = new Router()
 app.use(cors())
-app.use(bodyParser())
+// app.use(bodyParser())
+app.use(koaBody({
+  multipart: true, // 支持文件上传
+  formidable: {
+    uploadDir: path.join(rootDir, 'public/uploads'), // 设置文件上传目录
+    keepExtensions: true, // 保持文件扩展名
+  },
+}))
+
+// 假设静态资源位于项目的 `public` 目录
+app.use(serve(path.join(rootDir, 'public')))
+
+// -----------------------路由---------------------------
+// 登录
+router.post('/api/v1/auth/login', async (ctx: any) => {
+  // mobile: model.username || '18798272054',
+  // password: model.password || 'admin123',
+  // platform: 'web'
+  const { mobile, password } = ctx.request.body
+  const token = await authenticateUser(mobile, password)
+  if (token) {
+    const response = {
+      code:200,
+      message:'success',
+      data:{
+        access_token: token,
+        expires_in: 36000000,
+        type: 'Bearer',
+      },
+    }
+    ctx.set('Content-Type', 'application/json; charset=utf-8')
+    ctx.body = response
+  } else {
+    const response = { code:401, message:'用户名或密码错误', data:{} }
+    ctx.set('Content-Type', 'application/json; charset=utf-8')
+    ctx.body = response
+  }
+})
+
+// 发送文本消息/api/v1/talk/message/publish
+router.post('/api/v1/talk/message/publish', async (ctx: any) => {
+  // {"type":"text","content":"ff","quote_id":"","mentions":[],"receiver":{"receiver_id":2055,"talk_type":1}}
+  // {"type":"image","width":1024,"height":1024,"url":"https://im-static.gzydong.com/public/media/image/202404/2f82bc68-131c-4bac-a85f-46462b630cb9_1024x1024.png","size":10000,"receiver":{"receiver_id":2055,"talk_type":1}}
+  const model: MessagePublishRequest = ctx.request.body
+  const receiver = model.receiver
+  const receiver_id = receiver.receiver_id
+  if (receiver_id.indexOf('@') > -1) {
+    const room = await bot.Room.find({ id:receiver_id })
+    if (room) {
+      if (model.type === 'text') await room.say(model.content)
+      if (model.type === 'image') {
+        const fileBox = FileBox.fromUrl(model.url)
+        await room.say(fileBox)
+      }
+    }
+    const response = {
+      code: 200,
+      message: 'success',
+      data: {},
+    }
+    ctx.set('Content-Type', 'application/json; charset=utf-8')
+    ctx.body = response
+  } else {
+    const contact = await bot.Contact.find({ id: receiver_id })
+    if (contact) {
+      if (model.type === 'text') await contact.say(model.content)
+      if (model.type === 'image') {
+        const fileBox = FileBox.fromUrl(model.url)
+        await contact.say(fileBox)
+      }
+    }
+    const response = {
+      code: 200,
+      message: 'success',
+      data: {},
+    }
+    ctx.set('Content-Type', 'application/json; charset=utf-8')
+    ctx.body = response
+  }
+})
+
+// 上传图片/api/v1/upload/image
+router.post('/api/v1/upload/image', async (ctx: any) => {
+  console.info('ctx.request:', ctx.request.files)
+  try {
+    const file = ctx.request.files.file
+    if (!file) {
+      ctx.throw(400, 'No file uploaded!')
+    }
+    log.info('file:', file)
+    log.info('file:', JSON.stringify(file))
+    const fileJson:any = JSON.parse(JSON.stringify(file))
+    const fileExt = path.extname(fileJson.originalFilename).toLowerCase()
+    if (![ '.jpg', '.jpeg', '.png', '.gif' ].includes(fileExt)) {
+      ctx.throw(400, 'Only image files are allowed!')
+    }
+
+    const newFilename = `${Date.now()}${fileExt}`
+    const newFilePath = path.join(rootDir, 'public/uploads', newFilename)
+
+    const reader = fs.createReadStream(fileJson.filepath)
+    const writer = fs.createWriteStream(newFilePath)
+    reader.pipe(writer)
+    log.info('uploading %s -> %s', file.name, writer.path)
+
+    const response = {
+      code: 200,
+      message: 'success',
+      data: {
+        src: `http://127.0.0.1:9503/uploads/${newFilename}`,
+      },
+    }
+    ctx.set('Content-Type', 'application/json; charset=utf-8')
+    ctx.body = response
+  } catch (err) {
+    log.error('上传图片失败...', err)
+    ctx.throw(400, '上传图片失败...')
+  }
+})
+
+const files:{
+  [key:string]:{
+    file_name:string;
+    file_size:number;
+    fileWriteStream?:any;
+    targetFilePath:string;
+    targetFileUrl:string;
+  }
+} = {}
+// 获取上传文件id /api/v1/upload/multipart/initiate
+router.post('/api/v1/upload/multipart/initiate', async (ctx: any) => {
+  // {file_name: "2024年清单.md", file_size: 1357}
+  // {"code":200,"message":"success","data":{"split_size":5242880,"upload_id":"fa86a0c1-28cf-4312-b27e-687aeea9f8c9","upload_id_md5":"a383e7641225991f22c94735a0205706"}}
+  const { file_name, file_size } = ctx.request.body
+  const upload_id = uuidv4()
+  // 目标文件，将要创建或覆写
+  const curTime = new Date().getTime()
+  const targetFilePath = path.join(rootDir, 'public', 'uploads', curTime + '_' + file_name)
+  const targetFileUrl = `http://127.0.0.1:9503/uploads/${curTime + '_' + file_name}`
+
+  // 创建一个可写流用于输出组装后的文件
+  // const fileWriteStream = fs.createWriteStream(targetFilePath)
+
+  files[upload_id] = { file_name, file_size, targetFilePath, targetFileUrl }
+  const response = {
+    code: 200,
+    data: {
+      upload_id,
+      split_size: file_size,
+      upload_id_md5: upload_id,
+    },
+    message: 'success',
+  }
+  ctx.set('Content-Type', 'application/json; charset=utf-8')
+  ctx.body = response
+})
+
+// 分片上传/api/v1/upload/multipart, 接收分片组装成文件
+router.post('/api/v1/upload/multipart', async (ctx: any) => {
+  log.info('ctx.request.body:', JSON.stringify(ctx.request.body, undefined, 2))
+  log.info(ctx.request.files)
+  log.info(ctx.request.files.file)
+
+  //   Content-Type:
+  // multipart/form-data; boundary=----WebKitFormBoundaryABSyoBpxTUp5e5Dr
+  // file: （二进制）
+  // upload_id: fa86a0c1-28cf-4312-b27e-687aeea9f8c9
+  // split_index: 1
+  // split_num: 1
+  // 非最后一个分片响应：{code: 200, message: "success", data: {is_merge: false, upload_id: ""}}
+  // 最后一个分片响应：{"code":200,"message":"success","data":{"is_merge":true,"upload_id":"fa86a0c1-28cf-4312-b27e-687aeea9f8c9"}}
+
+  const { upload_id, split_index, split_num } = ctx.request.body
+  const file = ctx.request.files.file
+  const fileJson:any = JSON.parse(JSON.stringify(file))
+  const curFile = files[upload_id]
+  const response = {
+    code: 200,
+    message: 'success',
+    data: {
+      is_merge: true,
+      upload_id,
+    },
+  }
+  if (split_index !== split_num) {
+    const chunkReadStream = fs.createReadStream(fileJson.filepath)
+    const fileWriteStream = fs.createWriteStream(curFile?.targetFilePath as string)
+    chunkReadStream.pipe(fileWriteStream)
+    // 创建读取片段的可读流
+    response.data.is_merge = false
+    response.data.upload_id = ''
+  } else if (split_index === '1' && split_num === '1') {
+    const chunkReadStream = fs.createReadStream(fileJson.filepath)
+    const fileWriteStream = fs.createWriteStream(curFile?.targetFilePath as string)
+    chunkReadStream.pipe(fileWriteStream)
+    log.info('uploading %s -> %s', curFile?.file_name, fileWriteStream.path)
+  } else {
+    // 所有片段已经成功组装
+    const chunkReadStream = fs.createReadStream(fileJson.filepath)
+    const fileWriteStream = fs.createWriteStream(curFile?.targetFilePath as string)
+    chunkReadStream.pipe(fileWriteStream)
+    console.info('所有片段已经成功组装')
+  }
+  ctx.set('Content-Type', 'application/json; charset=utf-8')
+  ctx.body = response
+
+})
+
+// 发送文件消息/api/v1/talk/message/file
+router.post('/api/v1/talk/message/file', async (ctx: any) => {
+  // {
+  //   "upload_id": "fa86a0c1-28cf-4312-b27e-687aeea9f8c9",
+  //   "receiver_id": 2055,
+  //   "talk_type": 1
+  // }
+  const model: MessagePublishRequest = ctx.request.body
+  log.info('model:', JSON.stringify(model))
+  const {
+    upload_id,
+    receiver_id,
+    talk_type,
+  } = model
+
+  log.info('receiver_id:', receiver_id, upload_id, talk_type)
+  const file = files[upload_id]
+  log.info('file url:', file?.targetFileUrl)
+  if (receiver_id.indexOf('@') > -1) {
+    const room = await bot.Room.find({ id:receiver_id })
+    if (room) {
+      const fileBox = FileBox.fromUrl(file?.targetFileUrl as string)
+      await room.say(fileBox)
+
+    }
+    const response = {
+      code: 200,
+      message: 'success',
+      data: {},
+    }
+    ctx.set('Content-Type', 'application/json; charset=utf-8')
+    ctx.body = response
+  } else {
+    const contact = await bot.Contact.find({ id: receiver_id })
+    if (contact) {
+      const fileBox = FileBox.fromUrl(file?.targetFileUrl as string)
+      await contact.say(fileBox)
+
+    }
+    const response = {
+      code: 200,
+      message: 'success',
+      data: {},
+    }
+    ctx.set('Content-Type', 'application/json; charset=utf-8')
+    ctx.body = response
+  }
+})
 
 // 获取联系人列表
 router.get('/api/v1/contact/list', async (ctx: any) => {
-  // log.info('/api/v1/contact/list:', JSON.stringify(ctx))
+  log.info('/api/v1/contact/list:', JSON.stringify(ctx))
   const newContacts: NewContact[] = await getAllContacts(bot) as  NewContact[]
   contactList = newContacts
   const response = {
@@ -916,7 +1185,6 @@ type TalkRecord = {
   is_revoke: number;
   is_mark: number;
   is_read: number;
-  content: string;
   created_at: string;
   extra: any;
 };
@@ -930,14 +1198,14 @@ const getTalkRecords = async (
 ): Promise<TalkRecord[]> => {
   // Implement this function to retrieve the talk records based on query parameters
   const records = recordsDir[receiverId]
-  log.info('聊天记录：', records, receiverId, talkType, limit, recordId)
+  log.info('聊天记录：', JSON.stringify(records), receiverId, talkType, limit, recordId)
   return records || [] // Return an array of talk records
 }
 
 router.get('/api/v1/talk/records', async (ctx) => {
   const recordId = Number(ctx.query['record_id']) || 0
   const receiverId = ctx.query['receiver_id'] as string
-  const talkType = Number(ctx.query['talk_type']) || 1
+  const talkType = Number(ctx.query['talk_type']) || 0
   const limit = Number(ctx.query['limit']) || 30
 
   const talkRecords = await getTalkRecords(recordId, receiverId, talkType, limit)

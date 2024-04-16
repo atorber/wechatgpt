@@ -133,3 +133,6 @@ data/*.json
 data/*.db
 *.memory-card.json
 output/*
+file/*
+public/uploads/*
+data/*

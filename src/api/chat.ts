@@ -1,5 +1,6 @@
 /* eslint-disable sort-keys */
 import { Contact, Message, Room, Wechaty, log, types } from 'wechaty'
+import path from 'path'
 import { getCurrentFormattedDate } from '../utils/mod.js'
 import type { SendTextRequest } from '../types/mod.js'
 import { v4 as uuidv4 } from 'uuid'
@@ -7,6 +8,12 @@ import { FileBox } from 'file-box'
 import htmlToDocx from 'html-to-docx'
 import DB from '../db/nedb.js'
 const messageChatData = DB('data/messageChat.db')
+
+const rootDir = path.resolve(process.cwd(), './')
+log.info('rootDir:', rootDir)
+
+// import DB from '../db/nedb.js'
+// const messageData = DB('data/message.db')
 
 export async function getAvatarUrl (params:Contact|Room) {
   try {
@@ -27,9 +34,9 @@ export async function updateChats (
   const room = message.room()
   const text = message.text()
   const curTime = getCurrentFormattedDate()
-  const msgType = message.type() === types.Message.Text ? 1 : undefined
+  const msgType = 1
   const curMsg =     {
-    id: room?.id || talker.id,
+    // id: room?.id || talker.id,
     sequence: 1140,
     msg_id: message.id,
     talk_type: 1,
@@ -40,10 +47,60 @@ export async function updateChats (
     avatar: await getAvatarUrl(room || talker) || 'https://im.gzydong.club/public/media/image/talk/20220221/447d236da1b5787d25f6b0461f889f76_96x96.png',
     is_revoke: 0,
     is_mark: 0,
-    is_read: 1,
+    is_read: 0,
     content: text,
     created_at: getCurrentFormattedDate(),
-    extra: {},
+    extra: {
+      content: text,
+    },
+  }
+
+  switch (message.type()) {
+    case types.Message.Image: {
+      const file = message.toImage()
+      const thumbnail = await file.thumbnail()
+      await thumbnail.toFile(path.join(rootDir, 'public', 'uploads', `${message.id}.jpg`))
+
+      curMsg.msg_type = 3
+      curMsg.extra = {
+        height: 1024,
+        name: '',
+        size: thumbnail.size || 0,
+        url: `http://127.0.0.1:9503/uploads/${message.id}.jpg`,
+        width: 1024,
+      } as any
+      break
+    }
+    case types.Message.Attachment:{
+      const file = await message.toFileBox()
+      const fileName = file.name
+      await file.toFile(path.join(rootDir, 'public', 'uploads', `${message.id}_${fileName}`))
+
+      curMsg.msg_type = 6
+      curMsg.extra = {
+        drive: 1,
+        name:fileName,
+        path:`http://127.0.0.1:9503/uploads/${message.id}_${fileName}`,
+        size:file.size || 0,
+      } as any
+      break
+    }
+    case types.Message.Audio:{
+      const file = await message.toFileBox()
+      const fileName = file.name
+      await file.toFile(path.join(rootDir, 'public', 'uploads', `${message.id}_${fileName}`))
+
+      curMsg.msg_type = 4
+      curMsg.extra = {
+        duration: 0,
+        name:fileName || '',
+        url:`http://127.0.0.1:9503/uploads/${message.id}_${fileName}`,
+        size:file.size || 0,
+      } as any
+      break
+    }
+    default:
+      break
   }
 
   if (room) {
@@ -65,29 +122,12 @@ export async function updateChats (
       unread_num: 0,
       updated_at: curTime,
     }
+    curMsg.talk_type = 2
     const newMessage = {
       sid:message.id,
       event:'im.message',
       content:{
-        data:{
-          avatar: await getAvatarUrl(room) || 'https://im.gzydong.club/public/media/image/talk/20220221/447d236da1b5787d25f6b0461f889f76_96x96.png',
-          content:text,
-          created_at:curTime,
-          extra:{
-
-          },
-          id:room.id,
-          is_revoke:0,
-          is_mark:0,
-          is_read:0,
-          msg_id:message.id,
-          msg_type:1,
-          nickname:talker.name(),
-          receiver_id:room.id,
-          sequence:379,
-          talk_type:2,
-          user_id:talker.id,
-        },
+        data:curMsg,
         sender_id:talker.id,
         receiver_id:room.id,
         talk_type:2,
@@ -124,25 +164,7 @@ export async function updateChats (
       sid:message.id,
       event:'im.message',
       content:{
-        data:{
-          id:talker.id,
-          sequence:379,
-          msg_id:message.id,
-          talk_type:1,
-          msg_type:1,
-          user_id:talker.id,
-          receiver_id:listener?.id,
-          nickname:talker.name(),
-          avatar:await getAvatarUrl(talker) || 'https://im.gzydong.club/public/media/image/avatar/20230516/c5039ad4f29de2fd2c7f5a1789e155f5_200x200.png',
-          is_revoke:0,
-          is_mark:0,
-          is_read:0,
-          content:text,
-          created_at:getCurrentFormattedDate(),
-          extra:{
-
-          },
-        },
+        data:curMsg,
         sender_id:talker.id,
         receiver_id:listener?.id,
         talk_type:1,

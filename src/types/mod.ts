@@ -9,7 +9,7 @@ import type {
   BaseConfig,
 } from './data.js'
 
-import type { SendTextRequest } from './request.js'
+import type { SendTextRequest, MessagePublishRequest } from './request.js'
 
 export type {
   TalkerMessage,
@@ -17,6 +17,7 @@ export type {
   ChatData,
   BaseConfig,
   SendTextRequest,
+  MessagePublishRequest,
 }
 export {
   talkerMessageFrom,
