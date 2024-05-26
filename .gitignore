@@ -129,10 +129,13 @@ dist
 .yarn/install-state.gz
 .pnp.*
 .DS_Store
-data/*.json
+data/**/*.json
 data/*.db
 *.memory-card.json
 output/*
 file/*
 public/uploads/*
 data/*
+public/draws/*.png
+public/images/*.png
+data/history.json

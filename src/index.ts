@@ -34,6 +34,13 @@ import {
 } from './api/chat.js'
 import { KeyWords } from './types/data.js'
 import { validateToken, authenticateUser } from './service/user-service.js'
+import {
+  PoemPalette,
+} from './poem-palette.js'
+
+import {
+  PoemPalette as PoemPaletteCoze,
+} from './poem-palette-coze.js'
 
 // import Koa from 'koa'
 // import Router from 'koa-router'
@@ -59,8 +66,17 @@ let contactList: any[] = []
 let roomList: any[] = []
 let webClient: any
 const recordsDir: {[key:string]:any[]} = getRecord()
-const chats:{[key:string]:any} = getTalk()
+let chats:{[key:string]:any} = getTalk()
 let currentUser:Contact
+let isCreating = false
+let textPoemLatest:any = {}
+
+const coze_token = process.env['COZE_TOKEN'] || ''
+const mj_token = process.env['MJ_TOKEN'] || ''
+const bot_id = process.env['BOT_ID'] || ''
+const pp = new PoemPalette(mj_token, coze_token)
+const ppCoze = new PoemPaletteCoze(coze_token, bot_id)
+let isCozeCreating = false
 
 // 设置定时任务，每隔 3 秒执行一次
 setInterval(() => {
@@ -72,11 +88,54 @@ setInterval(() => {
   updateData(contactList, 'contactList')
   updateData(roomList, 'roomList')
   // log.info('配置已保存')
+  chats = getTalk()
 }, 3000)
 
 // log.info('config:', JSON.stringify(config, null, '\t'))
 
 type Publisher = Contact | Message | Room
+
+// 生成海报
+const createPoster = async (publisher:Publisher, textPoem:any, disc:string) => {
+  console.info('textPoem:', JSON.stringify(textPoem, null, 2))
+  await publisher.say('正在生成海报，请等待...')
+  isCreating = true
+  const title = textPoem['诗题']
+  const content = textPoem['诗词']
+  // const disc = textPoem['画面描述'];
+
+  // 生成图片
+  const imageUrl = await pp.createImage(textPoem, disc)
+  console.info('imageUrl:', imageUrl)
+
+  // const imageUrl = 'https://filesystem.site/cdn/20240501/gkmSV1Vm1u8C9qEfB6utodMNnbCzr1.png'
+  if (imageUrl) {
+    // const imageUrl = 'https://cdn.gptbest.vip/mj/attachments/1232309211187380249/1233725967327825930/zik999_an_old_pine_tree_with_gnarled_branches_vibrant_green_on__5219f839-457e-466e-be64-c8febbb8d41d.png?ex=662e2458&is=662cd2d8&hm=e5d2448343781f375b601b2f59f1bdb844a1b993dc9b805662e4cffe33fbe45a&'
+    // 下载图片
+    const path = await pp.downloadImage(imageUrl, './public/images')
+    // const path = await downloadImage('https://filesystem.site/cdn/20240423/mElg1SliaPWbVusYjbgtsRH0e1o05u.png', './public/images');
+
+    // const path = './public/images/Ia9SOHm12lsR33wM3BKmIjM58qq5bf.png';
+    // const path = './public/images/mElg1SliaPWbVusYjbgtsRH0e1o05u.png';
+    // const path = './public/images/20240427105557.png';
+    console.info('path:', path)
+
+    // 分割图片
+    const images = await pp.sliceImage(path, './public/images/')
+    console.info('images:', images)
+
+    // 生成带文字的海报，并发送
+    images.map(async (imagePath) => {
+      const newImagePath = await pp.drawPosterWithText(imagePath, title, content, './public/draws')
+      const fileBox = FileBox.fromFile(newImagePath)
+      await publisher.say(fileBox)
+    })
+  } else {
+    await publisher.say('生成失败，请重新发送任务')
+    console.error('图片生成失败：imageUrl is empty')
+  }
+  isCreating = false
+}
 
 const sendMessage = async (publisher: Publisher, text: Sayable): Promise<void> => {
   await publisher.say(text)
@@ -153,6 +212,7 @@ async function onMessage (msg: Message) {
   log.info('onMessage', JSON.stringify(msg))
   const talker = msg.talker()
   const room = msg.room()
+  const topic = await room?.topic()
   let text = msg.text()
 
   // 保留字转换，将保留字转换为内部指令
@@ -193,7 +253,8 @@ async function onMessage (msg: Message) {
         curId = talker.id
         curUser = talker.name()
       }
-      log.info('curUser', curUser, curId)
+      log.info('curUser', curUser)
+      log.info('curId', curId)
 
       let curUserConfig = whiteList[curId] || undefined
       log.info('curUserConfig:', JSON.stringify(curUserConfig))
@@ -418,6 +479,64 @@ async function onMessage (msg: Message) {
               await sendMessage(msg, '指令格式有误，请检查后重新输入')
             }
           }
+        } else if (text.startsWith('/生成诗词')) {
+          if (isCreating) {
+            await sendMessage(msg, '当前有任务正在生成，请等待完成后再发起新的任务~')
+          } else {
+            await sendMessage(msg, '正在生成诗句，请稍等...')
+            try {
+              const textArr = text.split(' ')
+              const input = textArr[1]
+              if (input) {
+                isCreating = true
+                const textPoem = await pp.chat(curId, input, [])
+                await msg.say(`${textPoem['诗题']}\n${textPoem['诗词']}`)
+                textPoemLatest = textPoem
+                isCreating = false
+              }
+            } catch (err) {
+              isCreating = false
+              await sendMessage(msg, '生成失败，请重新发送任务')
+              log.error('生成诗句失败...', err)
+            }
+          }
+        } else if (text.startsWith('/生成海报')) {
+          if (isCreating) {
+            await sendMessage(msg, '当前有任务正在生成，请等待完成后再发起新的任务~')
+          } else {
+            isCreating = true
+            try {
+              const textArr = text.split(' ')
+              const disc = textArr[1] || ''
+              if (textPoemLatest['诗题'] && textPoemLatest['诗词']) {
+                await createPoster(msg, textPoemLatest, disc)
+                await sendMessage(msg, '海报已生成，请查看~')
+                textPoemLatest = {}
+                isCreating = false
+              } else {
+                await sendMessage(msg, '请先生成诗句再生成海报~')
+              }
+            } catch (err) {
+              isCreating = false
+              await sendMessage(msg, '生成失败，请重新发送任务')
+              log.error('生成海报失败...', err)
+            }
+          }
+
+        } else if (text.startsWith('/最新任务')) {
+
+          if (textPoemLatest['诗题'] && textPoemLatest['诗词']) {
+            await msg.say(`${textPoemLatest['诗题']}\n${textPoemLatest['诗词']}`)
+          } else {
+            await sendMessage(msg, '当前没有任务正在生成~')
+          }
+
+        } else if (text.startsWith('/取消任务')) {
+          isCreating = false
+          textPoemLatest = {}
+          await sendMessage(msg, '生成任务已取消~')
+        } else if (text.startsWith('/诗词帮助')) {
+          await sendMessage(msg, '发送 /生成诗词+关键字 生成诗词\n发送 /生成海报 生成海报\n发送 /最新任务 查看最新任务\n发送 /取消任务 取消当前任务')
         } else {
           let atName = currentUser.name()
           if (room) {
@@ -492,6 +611,35 @@ async function onMessage (msg: Message) {
     }
   } else {
     log.info('重复消息')
+  }
+
+  if (room && topic && [ '插画诗', '吟诗一首' ].includes(topic) && text.startsWith('//')) {
+    if (text === '使用说明' || text === '如何使用') {
+      const helpText = '发送以 // 开头的消息与吟诗一首对话，可以要求生成插画诗，如：\n//我想要一首春天的诗\n//描述一只猫在草地上玩耍\n//生成海报'
+      await room.say(helpText)
+    }
+    if (isCozeCreating) {
+      await room.say('当前有任务正在运行，请等待完成后继续对话~', ...[ talker ])
+    } else {
+      text = text.replace(/\/\//g, '')
+      try {
+        isCozeCreating = true
+        const chatResp = await ppCoze.chat(topic, text, room.id)
+        if (chatResp.type === 'image') {
+          await room.say('海报已生成完毕~', ...[ talker ])
+          const file0 = FileBox.fromUrl(chatResp.content[0] as string)
+          await room.say(file0)
+          const file1 = FileBox.fromUrl(chatResp.content[1] as string)
+          await room.say(file1)
+        } else {
+          await room.say(chatResp.content)
+        }
+        isCozeCreating = false
+      } catch (err) {
+        log.error('插画诗 err:', err)
+        isCozeCreating = false
+      }
+    }
   }
 
 }
@@ -1156,13 +1304,31 @@ type CreateTalkRequest = {
 
 router.post('/api/v1/talk/create', async (ctx) => {
   const requestBody: CreateTalkRequest = ctx.request.body as CreateTalkRequest
-  const chatId = `${requestBody.talk_type}_${requestBody.receiver_id}`
-  const chat = chats[chatId] || {}
-  chat['content'] = ''
-  chat['draft_text'] = ''
-  chat['index_name'] = chatId
-  chat['created_at'] = chat.updated_at
-
+  const receiver_id = requestBody.receiver_id
+  const talk_type = requestBody.talk_type
+  const chatId = `${talk_type}_${receiver_id}`
+  const chats = getTalk()
+  let chat = chats[chatId]
+  if (!chat) {
+    chat = {
+      avatar: 'https://im.gzydong.club/public/media/image/talk/20220221/447d236da1b5787d25f6b0461f889f76_96x96.png',
+      id: chatId,
+      index_name: chatId,
+      is_disturb: 0,
+      is_online: 1,
+      is_robot: 0,
+      is_top: 0,
+      msg_text: '1',
+      name: chatId,
+      receiver_id,
+      remark_name: '',
+      talk_type,
+      unread_num: 0,
+      updated_at: '2024-04-17 13:43:44',
+    }
+    chats[chatId] = chat
+    updateTalk(chats)
+  }
   const response = {
     code: 200,
     data: chat,
@@ -1210,11 +1376,16 @@ router.get('/api/v1/talk/records', async (ctx) => {
 
   const talkRecords = await getTalkRecords(recordId, receiverId, talkType, limit)
 
+  // 对talkRecords对象数组按created_at字段顺序排列
+  const orderTalkRecords = (talkRecords: {created_at:string}[]) => {
+    return talkRecords.sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }
+
   const response = {
     code: 200,
     message: 'success',
     data: {
-      items: talkRecords,
+      items: orderTalkRecords(talkRecords),
       limit,
       record_id: recordId,
     },

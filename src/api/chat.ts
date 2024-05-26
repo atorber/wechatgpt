@@ -142,7 +142,7 @@ export async function updateChats (
       webClient.websocket.send(JSON.stringify(newMessage))
     }
   } else {
-    const records:any[] = recordsDir[talker.id] || []
+    const records:any[] = (message.self() ? recordsDir[listener?.id as string] : recordsDir[talker.id]) || []
     const chatId = `1_${talker.id}`
     chats[chatId] = {
       avatar: await getAvatarUrl(talker) || 'https://im.gzydong.club/public/media/image/talk/20220221/447d236da1b5787d25f6b0461f889f76_96x96.png',
@@ -173,7 +173,8 @@ export async function updateChats (
     curMsg.sequence = records.length
     records.push(curMsg)
     recordsDir[talker.id] = records
-    if (webClient) {
+    log.info('向ws发送消息：', JSON.stringify(newMessage, undefined, 2))
+    if (webClient && talker.id !== listener?.id) {
       webClient.websocket.send(JSON.stringify(newMessage))
     }
   }

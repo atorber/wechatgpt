@@ -8,11 +8,12 @@
     "exclude": [
       "node_modules/",
       "dist/",
-      "tests/fixtures/",
-      "src/config.ts.example"
+      "tests/fixtures/"
     ],
     "include": [
       "src/*/*.ts",
-      "src/*.ts"
+      "src/*.ts",
+      "tests/*.ts",
+      "tests/*/*.ts",
     ],
   }
