@@ -1,16 +1,18 @@
 {
-	"lastSave": "2024/5/27 00:23:08",
-	"lastUpdate": "2024/5/1 14:13:27",
-	"whiteList": {
-		"wxidorroomid": {
-			"endpoint": "https://api.openai-proxy.com",
-			"historyContextNum": 12,
-			"key": "sk-zsL0e6orgRyGtxxxxxxxxxx2BxgPfl5aB2D7hFgeVA",
-			"maxTokenNum": 2048,
-			"systemPrompt": "现在开始你是相声演员郭德纲",
-			"temperature": 1,
-			"timeout": 60,
-			"userPrompt": ""
+	"1688850326129606": {
+		"lastSave": "2024/9/29 18:49:58",
+		"lastUpdate": "2024/9/29 18:16:46",
+		"whiteList": {
+			"wxidorroomid": {
+				"endpoint": "https://api.openai-proxy.com",
+				"historyContextNum": 12,
+				"key": "sk-zsL0e6orgRyGtxxxxxxxxxx2BxgPfl5aB2D7hFgeVA",
+				"maxTokenNum": 2048,
+				"systemPrompt": "现在开始你是相声演员郭德纲",
+				"temperature": 1,
+				"timeout": 60,
+				"userPrompt": ""
+			}
 		}
 	}
 }
