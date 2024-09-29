@@ -388,7 +388,7 @@ export async function getAllContacts (bot:Wechaty) {
           remark: await contact.alias() || '',
         }
       } else {
-        log.info('不是好友:', contact.name())
+        // log.info('不是好友:', contact.name())
       }
       return null // 如果联系人不是好友，则返回 null 或其他适当的值
     }),
