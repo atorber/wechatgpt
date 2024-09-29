@@ -32,7 +32,7 @@ export class PoemPalette {
       conversation_id: conversation_id || uuid(),
       user,
       query,
-      history_count: 5,
+      history_count: 10,
       stream: false,
     }
     const res = await this.bot.chat(data)
