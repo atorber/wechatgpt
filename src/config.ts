@@ -200,22 +200,29 @@ export class BotConfig {
   }
 
   getConfig () {
-    const curConfig = userConfig[this.wxid]
+    const curConfig = userConfig[this.wxid] || {
+      lastSave: '2024/9/29 18:49:58',
+      lastUpdate: '2024/9/29 18:16:46',
+      whiteList: {},
+    }
     return curConfig
   }
 
   getHistory () {
-    const curHistory = userHistory[this.wxid]
+    const curHistory = userHistory[this.wxid] || {
+      historyContext: [],
+      time: [],
+    }
     return curHistory
   }
 
   getTalk () {
-    const curTalk = talk[this.wxid]
+    const curTalk = talk[this.wxid] || {}
     return curTalk
   }
 
   getRecord () {
-    const curRecord = record[this.wxid]
+    const curRecord = record[this.wxid] || []
     return curRecord
   }
 
