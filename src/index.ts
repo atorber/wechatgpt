@@ -6,7 +6,21 @@ import { Contact, Message, ScanStatus, types, WechatyBuilder, log, Room, Sayable
 import { FileBox } from 'file-box'
 import { PuppetBridgeJwpingWxbotV3090825 as PuppetBridge } from 'wechaty-puppet-bridge'
 import qrcodeTerminal from 'qrcode-terminal'
-import { baseConfig, getConfig, getHistory, getTalk, getRecord, saveConfigFile, updateHistory, updateRecord, updateTalk, updateData, getChatGPTConfig, storeHistory } from './config.js'
+import {
+  BotConfig,
+  baseConfig,
+  // getConfig,
+  // getHistory,
+  // getTalk,
+  // getRecord,
+  // saveConfigFile,
+  // updateHistory,
+  // updateRecord,
+  // updateTalk,
+  // updateData,
+  // getChatGPTConfig,
+  // storeHistory
+} from './config.js'
 import { getChatGPTReply } from './chatgpt.js'
 // import { getCurrentFormattedDate } from './utils/mod.js'
 import type { SendTextRequest, MessagePublishRequest } from './types/mod.js'
@@ -59,15 +73,19 @@ import serve from 'koa-static'
 const rootDir = path.resolve(process.cwd(), './')
 log.info('rootDir:', rootDir)
 
-const config = getConfig()
-const whiteList = config.whiteList
-let history = getHistory()
+let config: any
+let currentUser:Contact
+let botConfig:BotConfig
+
+let whiteList:any
+let history:any
+
 let contactList: any[] = []
 let roomList: any[] = []
 let webClient: any
-const recordsDir: {[key:string]:any[]} = getRecord()
-let chats:{[key:string]:any} = getTalk()
-let currentUser:Contact
+let recordsDir: {[key:string]:any[]}
+let chats:{[key:string]:any}
+
 let isCreating = false
 let textPoemLatest:any = {}
 
@@ -81,15 +99,15 @@ let isCozeCreating = false
 // 设置定时任务，每隔 3 秒执行一次
 setInterval(() => {
   config.lastSave = new Date().toLocaleString()
-  saveConfigFile(config)
-  updateHistory(history)
-  updateRecord(recordsDir)
-  updateTalk(chats)
-  updateData(contactList, 'contactList')
-  updateData(roomList, 'roomList')
+  botConfig.saveConfigFile(config)
+  botConfig.updateHistory(history)
+  botConfig.updateRecord(recordsDir)
+  botConfig.updateTalk(chats)
+  botConfig.updateData(contactList, 'contactList')
+  botConfig.updateData(roomList, 'roomList')
   // log.info('配置已保存')
-  chats = getTalk()
-}, 3000)
+  chats = botConfig.getTalk()
+}, 30000)
 
 // log.info('config:', JSON.stringify(config, null, '\t'))
 
@@ -138,11 +156,17 @@ const createPoster = async (publisher:Publisher, textPoem:any, disc:string) => {
 }
 
 const sendMessage = async (publisher: Publisher, text: Sayable): Promise<void> => {
-  await publisher.say(text)
+  const replyMessage: Message | void = await publisher.say(text)
+  if (replyMessage) {
+    await updateChats(replyMessage, recordsDir, chats, webClient)
+    await addMessage(replyMessage)
+  }
 
   let listener: Contact | undefined, room: Room | undefined
 
-  if (await (publisher as Room).payload?.topic) {
+  const topic = await (publisher as Room).payload?.topic
+
+  if (topic) {
     room = publisher as Room
   } else if ((publisher as Message).payload?.text) {
     const rawMessage = publisher as Message
@@ -195,12 +219,24 @@ function onLogin (user: Contact) {
   log.info('StarterBot', '%s login', user)
   if (process.env['WECHATY_PUPPET'] && [ 'wechaty-puppet-wechat', 'wechaty-puppet-wechat4u' ].includes(process.env['WECHATY_PUPPET'])) {
     currentUser = user
+    botConfig = new BotConfig(user.id)
+    recordsDir = botConfig.getRecord()
+    history = botConfig.getHistory()
+    chats = botConfig.getTalk()
+    config = botConfig.getConfig()
+    whiteList = config.whiteList
   }
 }
 
 function onReady () {
   if (process.env['WECHATY_PUPPET'] && [ 'wechaty-puppet-service' ].includes(process.env['WECHATY_PUPPET'])) {
     currentUser = bot.currentUser
+    botConfig = new BotConfig(currentUser.id)
+    recordsDir = botConfig.getRecord()
+    history = botConfig.getHistory()
+    chats = botConfig.getTalk()
+    config = botConfig.getConfig()
+    whiteList = config.whiteList
   }
 }
 
@@ -239,6 +275,7 @@ async function onMessage (msg: Message) {
 
   await updateChats(msg, recordsDir, chats, webClient)
   const addRes = await addMessage(msg)
+  await webClient.websocket.send(JSON.stringify({ type: 'message', data: msg }))
   if (addRes) {
     try {
       let rePly:any = {}
@@ -378,12 +415,12 @@ async function onMessage (msg: Message) {
           log.info('textArr', textArr)
           if (textArr.length === 3 && textArr[0] === '#绑定') {
             log.info('textArr', textArr)
-            const curUserConfig = getChatGPTConfig(textArr)
+            const curUserConfig = botConfig.getChatGPTConfig(textArr)
             rePly = await getChatGPTReply(curUserConfig, [ { content:'你能干什么？', role:'user' } ])
             if (rePly['role'] !== 'err') {
               rePlyText = '配置成功，已获得20次免费对话次数，我是你的智能助手~\n\n' + rePly['content']
-              history = storeHistory(history, curId, 'user', '你能干什么？')
-              history = storeHistory(history, curId, rePly.role, rePly.content)
+              history = botConfig.storeHistory(history, curId, 'user', '你能干什么？')
+              history = botConfig.storeHistory(history, curId, rePly.role, rePly.content)
               updateConfig(curId, curUserConfig, whiteList, config, history)
             } else {
               rePlyText = '输入的配置信息有误或权限不足，请使用key请求api验证配置信息是否正确后重试'
@@ -580,7 +617,7 @@ async function onMessage (msg: Message) {
                   text = text.slice(textArr[0].length)
                 }
               }
-              history = storeHistory(history, curId, 'user', text)
+              history = botConfig.storeHistory(history, curId, 'user', text)
               const messages:any[] = history[curId].historyContext.slice(curUserConfig.historyContextNum * (-1))
               if (systemPrompt) {
                 messages.unshift({ content:systemPrompt, role:'system' })
@@ -588,7 +625,7 @@ async function onMessage (msg: Message) {
               rePly = await getChatGPTReply(curUserConfig, messages)
               await sendMessage(msg, rePly['content'])
               if (rePly['role'] !== 'err') {
-                history = storeHistory(history, curId, rePly.role, rePly.content)
+                history = botConfig.storeHistory(history, curId, rePly.role, rePly.content)
                 quota = quota - 1
                 curUserConfig['quota'] = quota
                 updateConfig(curId, curUserConfig, whiteList, config, history)
@@ -613,31 +650,33 @@ async function onMessage (msg: Message) {
     log.info('重复消息')
   }
 
-  if (room && topic && [ '插画诗', '吟诗一首' ].includes(topic) && text.startsWith('//')) {
+  if (room && topic && [ '插画诗', '吟诗一首' ].includes(topic)) {
     if (text === '使用说明' || text === '如何使用') {
-      const helpText = '发送以 // 开头的消息与吟诗一首对话，可以要求生成插画诗，如：\n//我想要一首春天的诗\n//描述一只猫在草地上玩耍\n//生成海报'
+      const helpText = '发送以 // 开头的消息与吟诗一首对话，可以要求生成插画诗，例如：\n\n//我想要一首春天的诗\n//描述一只猫在草地上玩耍\n//生成海报\n//润色一下 《七十有感》本人今年七十一，弯腰驼背头渐低。手笨眼迟行动缓，不与别人争高低。'
       await room.say(helpText)
     }
-    if (isCozeCreating) {
-      await room.say('当前有任务正在运行，请等待完成后继续对话~', ...[ talker ])
-    } else {
-      text = text.replace(/\/\//g, '')
-      try {
-        isCozeCreating = true
-        const chatResp = await ppCoze.chat(topic, text, room.id)
-        if (chatResp.type === 'image') {
-          await room.say('海报已生成完毕~', ...[ talker ])
-          const file0 = FileBox.fromUrl(chatResp.content[0] as string)
-          await room.say(file0)
-          const file1 = FileBox.fromUrl(chatResp.content[1] as string)
-          await room.say(file1)
-        } else {
-          await room.say(chatResp.content)
+    if (text.startsWith('//')) {
+      if (isCozeCreating) {
+        await room.say('当前有任务正在运行，请等待完成后继续对话~', ...[ talker ])
+      } else {
+        text = text.replace(/\/\//g, '')
+        try {
+          isCozeCreating = true
+          const chatResp = await ppCoze.chat(topic, text, room.id)
+          if (chatResp.type === 'image') {
+            await room.say('海报已生成完毕~', ...[ talker ])
+            const file0 = FileBox.fromUrl(chatResp.content[0] as string)
+            await room.say(file0)
+            const file1 = FileBox.fromUrl(chatResp.content[1] as string)
+            await room.say(file1)
+          } else {
+            await room.say(chatResp.content)
+          }
+          isCozeCreating = false
+        } catch (err) {
+          log.error('插画诗 err:', err)
+          isCozeCreating = false
         }
-        isCozeCreating = false
-      } catch (err) {
-        log.error('插画诗 err:', err)
-        isCozeCreating = false
       }
     }
   }
@@ -787,16 +826,19 @@ router.post('/api/v1/auth/login', async (ctx: any) => {
 router.post('/api/v1/talk/message/publish', async (ctx: any) => {
   // {"type":"text","content":"ff","quote_id":"","mentions":[],"receiver":{"receiver_id":2055,"talk_type":1}}
   // {"type":"image","width":1024,"height":1024,"url":"https://im-static.gzydong.com/public/media/image/202404/2f82bc68-131c-4bac-a85f-46462b630cb9_1024x1024.png","size":10000,"receiver":{"receiver_id":2055,"talk_type":1}}
+  console.info('ctx.request.body:', ctx.request.body)
   const model: MessagePublishRequest = ctx.request.body
   const receiver = model.receiver
   const receiver_id = receiver.receiver_id
-  if (receiver_id.indexOf('@') > -1) {
+  if (receiver_id.indexOf('@') > -1 || receiver_id.indexOf('R:') > -1) {
     const room = await bot.Room.find({ id:receiver_id })
     if (room) {
-      if (model.type === 'text') await room.say(model.content)
+      if (model.type === 'text') {
+        await sendMessage(room, model.content)
+      }
       if (model.type === 'image') {
         const fileBox = FileBox.fromUrl(model.url)
-        await room.say(fileBox)
+        await sendMessage(room, fileBox)
       }
     }
     const response = {
@@ -809,10 +851,14 @@ router.post('/api/v1/talk/message/publish', async (ctx: any) => {
   } else {
     const contact = await bot.Contact.find({ id: receiver_id })
     if (contact) {
-      if (model.type === 'text') await contact.say(model.content)
+      if (model.type === 'text') {
+        // await contact.say(model.content)
+        await sendMessage(contact, model.content)
+      }
       if (model.type === 'image') {
         const fileBox = FileBox.fromUrl(model.url)
-        await contact.say(fileBox)
+        // await contact.say(fileBox)
+        await sendMessage(contact, fileBox)
       }
     }
     const response = {
@@ -1307,7 +1353,7 @@ router.post('/api/v1/talk/create', async (ctx) => {
   const receiver_id = requestBody.receiver_id
   const talk_type = requestBody.talk_type
   const chatId = `${talk_type}_${receiver_id}`
-  const chats = getTalk()
+  const chats = botConfig.getTalk()
   let chat = chats[chatId]
   if (!chat) {
     chat = {
@@ -1327,7 +1373,7 @@ router.post('/api/v1/talk/create', async (ctx) => {
       updated_at: '2024-04-17 13:43:44',
     }
     chats[chatId] = chat
-    updateTalk(chats)
+    botConfig.updateTalk(chats)
   }
   const response = {
     code: 200,
@@ -1364,7 +1410,7 @@ const getTalkRecords = async (
 ): Promise<TalkRecord[]> => {
   // Implement this function to retrieve the talk records based on query parameters
   const records = recordsDir[receiverId]
-  log.info('聊天记录：', JSON.stringify(records), receiverId, talkType, limit, recordId)
+  log.info('聊天记录：', JSON.stringify(records?.length), receiverId, talkType, limit, recordId)
   return records || [] // Return an array of talk records
 }
 
@@ -1395,6 +1441,7 @@ router.get('/api/v1/talk/records', async (ctx) => {
 })
 
 router.post('/api/v1/talk/message/text', async (ctx) => {
+  console.info('ctx.request.body:', ctx.request.body)
   const requestBody: SendTextRequest = ctx.request.body as SendTextRequest
   await updateChatsReply(bot, requestBody, recordsDir, chats, webClient)
   if (requestBody.talk_type === 2) {
@@ -1442,6 +1489,7 @@ routerWs.get('/wss/default.io', async (ctx: any) => {
   if (isValidToken) {
     webClient = ctx
     ctx.websocket.on('open', () => {
+      log.info('WebSocket opened')
       const message = { event:'connect', content:{ ping_interval:30, ping_timeout:75 } }
       ctx.websocket.send(JSON.stringify(message))
     })
@@ -1474,6 +1522,8 @@ routerWs.get('/wss/default.io', async (ctx: any) => {
       log.info('WebSocket closed')
     })
   } else {
+    // 无效的
+    console.info('Invalid token')
     ctx.websocket.close(1008, 'Invalid token')
   }
 })

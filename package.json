@@ -50,6 +50,7 @@
     "typechat": "^0.0.10",
     "typescript": "^5.1.6",
     "uuid": "^9.0.0",
+    "vika-orm": "^0.2.3",
     "wechaty": "^1.20.2",
     "wechaty-puppet-bridge": "^0.10.4",
     "wechaty-puppet-padlocal": "^1.20.1",

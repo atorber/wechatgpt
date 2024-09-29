@@ -65,7 +65,7 @@ export async function updateChats (
       curMsg.extra = {
         height: 1024,
         name: '',
-        size: thumbnail.size || 0,
+        size: thumbnail.size || 100,
         url: `http://127.0.0.1:9503/uploads/${message.id}.jpg`,
         width: 1024,
       } as any
@@ -81,7 +81,7 @@ export async function updateChats (
         drive: 1,
         name:fileName,
         path:`http://127.0.0.1:9503/uploads/${message.id}_${fileName}`,
-        size:file.size || 0,
+        size:file.size || 100,
       } as any
       break
     }
