@@ -139,3 +139,8 @@ data/*
 public/draws/*.png
 public/images/*.png
 data/history.json
+package-lock.json
+data/config.json
+data/history.json
+data/record.json
+data/talk.json
